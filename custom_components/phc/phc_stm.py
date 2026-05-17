@@ -15,7 +15,7 @@ from .custom_http import RawTCPClientSession
 
 
 @dataclass
-class PhcLight:
+class _PhcLight:
     name: str
     module: int
     channel: int
@@ -33,7 +33,7 @@ class XMLException(Exception):
     """XML is not as expected."""
 
 
-class _PhcCmd(Enum):
+class _PhcNormalCmd(Enum):
     STATUS = 1
     ON = 2  # Confirmed by app
     OFF = 3  # Confirmed by app
@@ -64,7 +64,53 @@ class _PhcCmd(Enum):
     STOP_RUNNING_TIME = (
         18  # Stops the timer: means the action that is taken at the end is not taken
     )
-    DIMMER = 22  # Seemingly. Then follows dimmer value which is uint8 then follows 0
+
+
+class _PhcDimmerCmd(Enum):
+    STATUS = 1
+    MAX_WITH_MEMORY = 2
+    MAX_NO_MEMORY = 3
+    OFF = 4
+    CHANGE_MAX_WITH_MEMORY = 5  # Toggle between off and on and save max in memory
+    CHANGE_MAX_NO_MEMORY = 6  # Toggle between off and on?
+    CHANGE_DIMMING_DIRECTION = 7  # Not entirely clear
+    DIM_UP = 8
+    DIM_DOWN = 9
+    SAVE_MEM = 10
+    TOGGLE_WITH_MEM = 11  # Means when turned on used the memory value.
+    TURN_ON_WITH_MEMORY = 12
+    SAVE_DIA_1 = 13  # ??
+    TOGGLE_DIA_1 = 14
+    ON_DIA_1 = 15
+    SAVE_DIA_2 = 16  # ??
+    TOGGLE_DIA_2 = 17
+    ON_DIA_2 = 18
+    SAVE_DIA_3 = 19  # ??
+    TOGGLE_DIA_3 = 20
+    ON_DIA_3 = 21
+    DIMMER = 22  # Then follows dimmer value which is uint8 then follows 0
+
+
+class _JrmCmd(Enum):
+    """I believe movement command take prio as first argument and time as second."""
+
+    STOP = 2
+    CHANGE_UP_STOP = 3  # If moving stop, else go up.
+    CHANGE_DOWN_up = 4
+    UP = 5
+    DOWN = 6
+    TIP_UP = 7  # small adjustment
+    TIP_DOWN = 8
+    LOCK_PRIO = 9  # STOP these priorities from access
+    UNLOCK_PRIO = 10
+    LEARNING_ON = 11  # Unsure if supported
+    LEARNING_OFF = 12
+    SET_PRIO = 13
+    RESET_PRIO = 14
+    SENSOR_ROLLUIK_UP = 15
+    SENSOR_JALOEZIE_UP = 16  # Same as above except slight movement opposite at the end
+    SENSOR_ROLLUIK_DOWN = 17
+    SENSOR_JALOZIE_DOWN = 18
 
 
 class PhcStm:
@@ -73,8 +119,8 @@ class PhcStm:
     def __init__(self, host, logger) -> None:
         """Init the controller."""
         self.host = host
-        # Dict[tuple[mod, cha], PhcLight]
-        self.lights: dict[tuple[int, int], PhcLight] = {}
+        # Dict[tuple[mod, cha], _PhcLight]
+        self.lights: dict[tuple[int, int], _PhcLight] = {}
         # TODO: need cover here as well? How to seperate cover from the thing
         self.lock = asyncio.Lock()
         self.logger = logger
@@ -117,20 +163,24 @@ class PhcStm:
         self, module, command, extra_data: list[int] | None = None
     ) -> list[int]:
         async with self.lock:
-            if extra_data is None:
-                extra_data = []
-            data = self.send_telegram_payload.format(
-                module=module,
-                command=command,
-                params="\n".join(
-                    [f"<param><value><i4>{e}</i4></value></param>" for e in extra_data]
-                ),
-            )
-            async with RawTCPClientSession(self.host) as session:
-                response = await session.post(
-                    headers=self.headers,
-                    data=data,
+            async with asyncio.timeout(30):
+                if extra_data is None:
+                    extra_data = []
+                data = self.send_telegram_payload.format(
+                    module=module,
+                    command=command,
+                    params="\n".join(
+                        [
+                            f"<param><value><i4>{e}</i4></value></param>"
+                            for e in extra_data
+                        ]
+                    ),
                 )
+                async with RawTCPClientSession(self.host) as session:
+                    response = await session.post(
+                        headers=self.headers,
+                        data=data,
+                    )
         root = ET.fromstring(response.content)
         return [int(i4.text) for i4 in root.findall(".//i4")]
 
@@ -138,29 +188,24 @@ class PhcStm:
         """Instruct the light to turn on."""
         if self.lights[(module, channel)].dimmer:
             await self._cmd(
-                module, self.create_command(channel, _PhcCmd.OFF_TIMED)
-            )  # Seems like my interpretation of the commands is off.
+                module, self.create_command(channel, _PhcDimmerCmd.TURN_ON_WITH_MEMORY)
+            )
         else:
-            await self._cmd(module, self.create_command(channel, _PhcCmd.ON))
-
-    async def toggle(self, module: int, channel: int):
-        """Instruct the light to turn on."""
-        await self._cmd(module, self.create_command(channel, _PhcCmd.TOGGLE))
+            await self._cmd(module, self.create_command(channel, _PhcNormalCmd.ON))
 
     async def turn_off(self, module: int, channel: int):
         """Instruct the light to turn off."""
-        cmd = _PhcCmd.OFF
+        cmd = _PhcNormalCmd.OFF
         if self.lights[(module, channel)].dimmer:
-            cmd = (
-                _PhcCmd.OFF_TIMED
-            )  # Seems like my interpretation of the commands is off.
+            cmd = _PhcDimmerCmd.OFF
         await self._cmd(module, self.create_command(channel, cmd))
 
     async def dim(self, module, channel, brightness):
         """Set the brightness of this channel to `brightness`."""
         await self._cmd(
-            module, self.create_command(channel, _PhcCmd.DIMMER), [brightness, 0]
+            module, self.create_command(channel, _PhcDimmerCmd.DIMMER), [brightness, 0]
         )
+        # TODO: do we want to save this value in the dimmer?
 
     def get_light_status(self, mask, channel):
         """Get the status of the specified channel out of the the returned value."""
@@ -175,30 +220,28 @@ class PhcStm:
         Return value is (on: bool, brightness: int | None)
         """
         try:
-            # Note: asyncio.TimeoutError and aiohttp.ClientError are already
-            # handled by the data update coordinator.
-            async with asyncio.timeout(30):
-                values = await self._cmd(
-                    module, self.create_command(channel, _PhcCmd.STATUS)
-                )
-                if is_dimmer and len(values) >= 7:
-                    light_status = self.get_light_status(values[6], channel)
-                    brightness = values[4 + channel]
-                else:
-                    light_status = self.get_light_status(values[4], channel)
-                    brightness = None
+            values = await self._cmd(
+                module, self.create_command(channel, _PhcNormalCmd.STATUS)
+            )
+            if is_dimmer and len(values) >= 7:
+                light_status = self.get_light_status(values[6], channel)
+                brightness = values[4 + channel]
+            else:
+                light_status = self.get_light_status(values[4], channel)
+                brightness = None
 
-                self.lights[(module, channel)].update(light_status, brightness)
-                return light_status, brightness
+            self.lights[(module, channel)].update(light_status, brightness)
         except HTTPError as err:
             raise HTTPError(f"Error communicating with API: {err}") from err
+        else:
+            return light_status, brightness
 
     async def update_all(self):
         """Update the status of all the lights."""
         for light in self.lights:
             await self.get_status(light.module, light.channel, light.dimmer)
 
-    def create_command(self, channel: int, cmd: _PhcCmd) -> int:
+    def create_command(self, channel: int, cmd: _PhcNormalCmd) -> int:
         """Create the command to execute for this channel."""
         return (channel << 5) | cmd.value
 
@@ -215,29 +258,60 @@ class PhcStm:
                     bin_value = bin_value_elem.text
                     break
         if bin_value is None:
-            raise XMLException()
-
+            raise XMLException
         return base64.b64decode(bin_value)
 
     def insert_light(self, mod: int, cha: int, dimmer: bool, name: str):
         """Insert a light into the stm."""
-        self.lights[(mod, cha)] = PhcLight(name, mod, cha, dimmer)
+        log_string = f"Found light[{name} MOD{mod}, CHA[{cha}]]"
+        self.logger.info(log_string)
+        self.lights[(mod, cha)] = _PhcLight(name, mod, cha, dimmer)
 
     def extract_lights(self, xml):
         """Extract the lights from the project."""
         root = ET.fromstring(xml)
-        for member in root.findall(".//TOOL"):
-            name = member.get("bez")
-            dimmer: bool = False
-            node = member.find(".//NODE/VAR[@modGrp='Ausgangsmodule']")
-            if node is None:
-                node = member.find(".//NODE/VAR[@modGrp='Dimmermodule']")
-                dimmer = True
+        for ausgang in root.findall(".//MODS[@grp='Ausgangsmodule']"):
+            for module in ausgang.findall(".//MOD[@name='AMD230_10']"):
+                mod_id = int(module.get("adr"))
+                node = module.find(".//CHAS[@grp='Ausgang']")
+                if node is None:
+                    continue
+                for channel in node.findall(".//CHA"):
+                    if channel.get("visu") == "false":
+                        continue
+                    cha_id = int(channel.get("adr"))
+                    name = channel.text
 
-            if node is not None:
-                mod_value = node.get("mod")
-                cha_value = node.get("cha")
-                self.insert_light(int(mod_value), int(cha_value), dimmer, name)
+                    self.insert_light(mod_id + 64, cha_id, False, name)
+
+            for module in ausgang.findall(".//MOD[@name='JRM']"):
+                mod_id = int(module.get("adr"))
+                node = module.find(".//CHAS[@grp='Ausgang']")
+                if node is None:
+                    continue
+                for channel in node.findall(".//CHA"):
+                    if channel.get("visu") == "false":
+                        continue
+                    cha_id = int(channel.get("adr"))
+                    name = channel.text
+                    log_string = f"JRM: {name}, {mod_id + 64}, {cha_id}"
+                    self.logger.info(log_string)
+
+        for dimmer in root.findall(".//MODS[@grp='Dimmermodule']"):
+            for module in dimmer.findall(".//MOD[@name]"):
+                if not module.get("name").startswith("DIM_"):
+                    continue
+                mod_id = int(module.get("adr"))
+                node = module.find(".//CHAS[@grp='Ausgang']")
+                if node is None:
+                    continue
+                for channel in node.findall(".//CHA"):
+                    if channel.get("visu") == "false":
+                        continue
+                    cha_id = int(channel.get("adr"))
+                    name = channel.text
+
+                    self.insert_light(mod_id + 160, cha_id, True, name)
 
     async def download_project(self) -> bool:
         """Download the project from the stm and parse it."""
@@ -261,7 +335,7 @@ class PhcStm:
                     with zipfile.ZipFile(zip_stream, "r") as zip_file:
                         for file_name in zip_file.namelist():
                             self.logger.info(file_name)
-                            if file_name == "project.tpfx":
+                            if file_name == "project.ppfx":
                                 with zip_file.open(file_name) as file:
                                     content = file.read()
                                     self.extract_lights(content)

@@ -1,7 +1,5 @@
 """Control PHC stm from home assistant."""
 
-from __future__ import annotations
-
 import asyncio
 from datetime import timedelta
 import logging
@@ -24,7 +22,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .phc_stm import PhcStm
 
 _LOGGER = logging.getLogger("phc")
-SCAN_INTERVAL = timedelta(seconds=30)
+SCAN_INTERVAL = timedelta(seconds=60)
 
 
 async def async_setup_entry(
