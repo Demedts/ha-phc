@@ -15,10 +15,10 @@ from homeassistant.components.light import (
     LightEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .const import DOMAIN
 from .phc_stm import PhcStm
 
 _LOGGER = logging.getLogger("phc")
@@ -33,11 +33,7 @@ async def async_setup_entry(
     """Set up the PHC platform."""
     # Setup connection with devices/cloud
     _LOGGER.info("Setting up platform")
-    ip = config_entry.data.get(CONF_HOST)
-    stm = PhcStm(ip, _LOGGER)
-    succes = await stm.download_project()
-    if not succes:
-        raise ConnectionError
+    stm = hass.data[DOMAIN][config_entry.entry_id]
 
     lights = [
         PhcLight(stm, light.name, light.module, light.channel, light.dimmer)

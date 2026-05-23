@@ -29,6 +29,13 @@ class _PhcLight:
         self.is_on = status
 
 
+@dataclass
+class _PhcScreen:
+    name: str
+    module: int
+    channel: int
+
+
 class XMLException(Exception):
     """XML is not as expected."""
 
@@ -96,7 +103,7 @@ class _JrmCmd(Enum):
 
     STOP = 2
     CHANGE_UP_STOP = 3  # If moving stop, else go up.
-    CHANGE_DOWN_up = 4
+    CHANGE_DOWN_STOP = 4
     UP = 5
     DOWN = 6
     TIP_UP = 7  # small adjustment
@@ -121,7 +128,7 @@ class PhcStm:
         self.host = host
         # Dict[tuple[mod, cha], _PhcLight]
         self.lights: dict[tuple[int, int], _PhcLight] = {}
-        # TODO: need cover here as well? How to seperate cover from the thing
+        self.screens: list[_PhcScreen] = []
         self.lock = asyncio.Lock()
         self.logger = logger
 
@@ -205,11 +212,38 @@ class PhcStm:
         await self._cmd(
             module, self.create_command(channel, _PhcDimmerCmd.DIMMER), [brightness, 0]
         )
-        # TODO: do we want to save this value in the dimmer?
 
     def get_light_status(self, mask, channel):
         """Get the status of the specified channel out of the the returned value."""
         return ((mask >> channel) & 1) == 1
+
+    async def open_screen(self, module: int, channel: int):
+        """Open screen."""
+        # I dont fully understand what 0,0,10 means. 10 has something to do with the time. But unclear what exactly
+        returned = await self._cmd(
+            module,
+            self.create_command(channel, _JrmCmd.UP),
+            [0, 0, 10],
+        )
+        self.logger.info(returned)
+
+    async def close_screen(self, module: int, channel: int):
+        """Close screen."""
+        # I dont fully understand what 0,0,10 means. 10 has something to do with the time. But unclear what exactly
+        returned = await self._cmd(
+            module,
+            self.create_command(channel, _JrmCmd.DOWN),
+            [0, 0, 10],
+        )
+        self.logger.info(returned)
+
+    async def stop_screen(self, module: int, channel: int):
+        """Stop opening or closing screen."""
+        # I dont fully understand what 0 means?
+        returned = await self._cmd(
+            module, self.create_command(channel, _JrmCmd.STOP), [0]
+        )
+        self.logger.info(returned)
 
     async def get_status(self, module, channel, is_dimmer: bool) -> tuple:
         """Fetch data from API endpoint.
@@ -294,8 +328,7 @@ class PhcStm:
                         continue
                     cha_id = int(channel.get("adr"))
                     name = channel.text
-                    log_string = f"JRM: {name}, {mod_id + 64}, {cha_id}"
-                    self.logger.info(log_string)
+                    self.screens.append(_PhcScreen(name, mod_id + 64, cha_id))
 
         for dimmer in root.findall(".//MODS[@grp='Dimmermodule']"):
             for module in dimmer.findall(".//MOD[@name]"):
@@ -348,3 +381,7 @@ class PhcStm:
     def get_lights(self):
         """Get all the lights in this stm."""
         return self.lights.values()
+
+    def get_covers(self):
+        """Get all the discoverd covers."""
+        return self.screens
