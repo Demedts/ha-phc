@@ -21,13 +21,6 @@ class _PhcLight:
     channel: int
     dimmer: bool
 
-    brightness: int | None = None
-    is_on: bool = False
-
-    def update(self, status, brightness):
-        self.brightness = brightness
-        self.is_on = status
-
 
 @dataclass
 class _PhcScreen:
@@ -220,30 +213,25 @@ class PhcStm:
     async def open_screen(self, module: int, channel: int):
         """Open screen."""
         # I dont fully understand what 0,0,10 means. 10 has something to do with the time. But unclear what exactly
-        returned = await self._cmd(
+        await self._cmd(
             module,
             self.create_command(channel, _JrmCmd.UP),
             [0, 0, 10],
         )
-        self.logger.info(returned)
 
     async def close_screen(self, module: int, channel: int):
         """Close screen."""
         # I dont fully understand what 0,0,10 means. 10 has something to do with the time. But unclear what exactly
-        returned = await self._cmd(
+        await self._cmd(
             module,
             self.create_command(channel, _JrmCmd.DOWN),
             [0, 0, 10],
         )
-        self.logger.info(returned)
 
     async def stop_screen(self, module: int, channel: int):
         """Stop opening or closing screen."""
         # I dont fully understand what 0 means?
-        returned = await self._cmd(
-            module, self.create_command(channel, _JrmCmd.STOP), [0]
-        )
-        self.logger.info(returned)
+        await self._cmd(module, self.create_command(channel, _JrmCmd.STOP), [0])
 
     async def get_status(self, module, channel, is_dimmer: bool) -> tuple:
         """Fetch data from API endpoint.
@@ -264,11 +252,15 @@ class PhcStm:
                 light_status = self.get_light_status(values[4], channel)
                 brightness = None
 
-            self.lights[(module, channel)].update(light_status, brightness)
         except HTTPError as err:
             raise HTTPError(f"Error communicating with API: {err}") from err
         else:
             return light_status, brightness
+
+    async def get_module_status(self, module) -> list[bool]:
+        """Get the status of a full binary output module."""
+        values = await self._cmd(module, self.create_command(0, _PhcNormalCmd.STATUS))
+        return [self.get_light_status(values[4], channel) for channel in range(8)]
 
     async def update_all(self):
         """Update the status of all the lights."""

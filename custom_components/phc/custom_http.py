@@ -1,32 +1,33 @@
+"""The PHC STM does not give valid HTTP responses. This is a workaround for that."""
+
 import asyncio
 
 
 class RawTCPResponse:
-    def __init__(self, status_code, headers, body):
+    """TCP Response."""
+
+    def __init__(self, status_code, headers, body) -> None:
+        """Init the TCPResponse. Headers will have faulty removed."""
         self.status = status_code
         self.headers = headers
         self._body = body
 
     @property
     def content(self):
+        """Content of the respone."""
         return self._body.decode(errors="replace")
-
-    async def json(self):
-        import json
-
-        return json.loads(await self.text())
 
 
 class RawTCPClientSession:
+    """Http implementation that allows faulty headers."""
+
     def __init__(self, host, port=None) -> None:
+        """Init the RawTCPClientSession with a host and a port."""
         # Parse host:port if combined string is given
         if ":" in host and port is None:
             parts = host.rsplit(":", 1)
             self.host = parts[0]
-            try:
-                self.port = int(parts[1])
-            except ValueError:
-                raise ValueError(f"Invalid port in host string: {host}")
+            self.port = int(parts[1])
         else:
             self.host = host
             self.port = port or 80
@@ -35,9 +36,11 @@ class RawTCPClientSession:
         self._writer = None
 
     async def __aenter__(self):
+        """ASYNC ENTRY."""
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
+        """ASYNC EXIT."""
         if self._writer:
             self._writer.close()
             await self._writer.wait_closed()
@@ -96,7 +99,9 @@ class RawTCPClientSession:
         return RawTCPResponse(status_code, headers, body_bytes)
 
     async def get(self, path="/", headers=None):
+        """Make a get request."""
         return await self._request("GET", path, headers)
 
     async def post(self, path="/", headers=None, data=None):
+        """Make a post request."""
         return await self._request("POST", path, headers, data)
