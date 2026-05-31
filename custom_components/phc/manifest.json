@@ -3,12 +3,7 @@
   "name": "phc",
   "codeowners": ["@demedts"],
   "config_flow": true,
-  "dependencies": [],
-  "documentation": "",
-  "homekit": {},
   "iot_class": "local_polling",
   "requirements": [],
-  "ssdp": [],
-  "zeroconf": [],
-  "version": "0.0.3"
+  "version": "0.0.6"
 }

@@ -163,7 +163,9 @@ class PhcStm:
         self, module, command, extra_data: list[int] | None = None
     ) -> list[int]:
         async with self.lock:
-            async with asyncio.timeout(30):
+            # Add .5 sec between commands. Hopefully this reduces load on the controller
+            await asyncio.sleep(0.5)
+            async with asyncio.timeout(5):
                 if extra_data is None:
                     extra_data = []
                 data = self.send_telegram_payload.format(
