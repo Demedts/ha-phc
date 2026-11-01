@@ -125,8 +125,6 @@ class PhcStm:
         self.lock = asyncio.Lock()
         self.logger = logger
 
-    # ip = "http://192.168.0.83:6680"
-
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
         "Connection": "Keep-Alive",

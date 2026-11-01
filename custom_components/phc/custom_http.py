@@ -84,8 +84,11 @@ class RawTCPClientSession:
             if line in (b"\r\n", b"\n", b""):
                 break
             if b":" in line:
-                key, val = line.decode().split(":", 1)
-                headers[key.strip()] = val.strip()
+                try:
+                    key, val = line.decode().split(":", 1)
+                    headers[key.strip()] = val.strip()
+                except UnicodeDecodeError:
+                    pass
             else:
                 # Ignore malformed header lines gracefully
                 pass
